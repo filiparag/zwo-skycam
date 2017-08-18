@@ -6,7 +6,7 @@ import time
 import zwoasi as asi
 
 # Initialize camera
-def initialize(_library='/root/allsky/lib/libASICamera2.so'):
+def initialize(_library='asi.so'):
 
     asi.init(_library)
 
