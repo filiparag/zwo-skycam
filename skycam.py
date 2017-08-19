@@ -3,20 +3,21 @@
 import os
 import sys
 import time
+from PIL import Image
 import zwoasi as asi
-from multiprocessing import Process
+from threading import Thread
 
 
 # Initialize camera
-def initialize(_library='asi.so'):
+def initialize(_library=(os.path.dirname(os.path.realpath(__file__)) + '/asi.so')):
 
     asi.init(_library)
 
     num_cameras = asi.get_num_cameras()
     if num_cameras == 0:
-        raise NameError('No cameras found')
+        raise Exception('No cameras found')
     if num_cameras > 1:
-        raise NameError('Only one camera is allowed')
+        raise Exception('Only one camera is allowed')
 
     cameras_found = asi.list_cameras()
 
@@ -46,20 +47,22 @@ def configure(_gain=150, _exposure=30000, _wb_b=99, \
     camera.set_control_value(asi.ASI_BRIGHTNESS, _brightness)
     camera.set_control_value(asi.ASI_FLIP, _flip)
 
+    camera.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, 80)
+
     global drange, color
     color = _color
     drange = _drange
 
 
 # Capture a single frame and save it to a file
-def capture(_path='./', _file=None, _extenstion='.jpg'):
+def capture(_directory='./', _file=None, _extenstion='.jpg'):
 
     if _file is None:
         _file = time.strftime('%Y-%m-%d-%H-%M-%S-%Z')
 
-    filename = _path + _file + _extenstion
+    filename = _directory + '/' + _file + _extenstion
 
-    global drange, color
+    global camera, drange, color
 
     if color is True:
         camera.set_image_type(asi.ASI_IMG_RGB24)
@@ -74,36 +77,104 @@ def capture(_path='./', _file=None, _extenstion='.jpg'):
 
 # Recording process function
 # Use timelapse function to start reording
-def record(_directory, _delay):
+def record(_directory, _delay, _extenstion):
 
-    while True:
+    global recorder
+    while recorder[1]:
         filename = str(time.time()).replace('.', '_')
-        capture(_path=_directory, _file=filename, _extenstion=_extension)
+        capture(_directory=_directory, _file=filename, _extenstion=_extenstion)
         time.sleep(_delay / 1000)
 
 
 # Run a background proess for creating a timelapse
 # Uses a RAM disk by default
 # _delay is time in milliseconds between expositions
-def timelapse(_action='start', _directory='/mnt/skycam', _delay=1000, _extenstion='.jpg'):
-
-    if _action == 'start':
-        start()
-    elif _action == 'stop':
-        stop()
+def timelapse(_action='start', _directory='/mnt/skycam', _delay=0, _extenstion='.jpg', _selection='newest', _delete=False):
 
     # Start the timelapse
     # Starts a timelapse in the bakground
     def start():
 
         if not os.path.exists(_directory):
-            raise NameError('Timelapse diretory does not exsist')
+            raise Exception('Timelapse diretory does not exsist')
 
         global recorder
-        recorder = Process(target=record, args=(_directory,))
-        recorder.start()
+        recorder = [Thread(target=record, args=(_directory, _delay, _extenstion)), True]
+        recorder[0].daemon = True
+        recorder[0].start()
 
     # Stops the timelapse
     def stop():
 
-        recorder.join()
+        global recorder     
+        recorder[1] = False
+        recorder[0].join()
+
+    # Returns the number of frames in the timelapse
+    def count(_directory):
+
+        return len(os.listdir(_directory))
+
+    # Returns a frame from the timelapse
+    # _selection can be 'oldest', 'newest' or 'all'
+    def fetch(_selection, _delete, _directory):
+
+        frames = os.listdir(_directory)
+
+        if len(frames) == 0:
+            raise Exception('No frames availabe to fetch')
+
+        if _selection == 'all':
+
+            frames = sorted(frames)
+            
+            images = []
+
+            for frame in frames:
+
+                images.append((
+                    Image.open(_directory + '/' + frame),
+                    float(os.path.splitext(frame)[0].replace('_', '.'))
+                ))
+
+                if _delete:
+                    os.remove(_directory + '/' + frame)
+
+            return images
+
+        else:
+            
+            if _selection == 'newest':
+                filename = max(frames)
+            elif _selection == 'oldest':
+                filename = max(frames)
+
+            image = Image.open(_directory + '/' + filename)
+            timestamp = float(os.path.splitext(filename)[0].replace('_', '.'))
+
+            if _delete:
+                os.remove(_directory + '/' + filename)
+
+            return (image, timestamp)
+
+
+    if _action == 'start':
+        start()
+    elif _action == 'stop':
+        stop()
+    elif _action == 'fetch':
+        return fetch(_selection, _delete, _directory)
+    elif _action == 'count':
+        return count(_directory)
+        
+
+if __name__ == '__main__':
+    initialize()
+    configure(_exposure=5000)
+    # timelapse('start', _delay=0, _directory='/mnt/skycam/')
+    # time.sleep(20)
+    # timelapse('stop')
+    f = timelapse('fetch', _selection='all', _delete=True, _directory='/mnt/skycam/')
+    # print(timelapse('count', _directory='/mnt/skycam/'))
+    # i.show()
+    # print(t)
