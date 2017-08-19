@@ -4,6 +4,8 @@ import os
 import sys
 import time
 import zwoasi as asi
+from multiprocessing import Process
+
 
 # Initialize camera
 def initialize(_library='asi.so'):
@@ -27,6 +29,7 @@ def initialize(_library='asi.so'):
     camera.stop_video_capture()
     camera.stop_exposure()
 
+
 # Configure camera settings
 # _drange must be either 8 or 16
 # _oolor is a boolean
@@ -47,13 +50,14 @@ def configure(_gain=150, _exposure=30000, _wb_b=99, \
     color = _color
     drange = _drange
 
+
 # Capture a single frame and save it to a file
-def capture(_file=None, _extenstion='.jpg'):
+def capture(_path='./', _file=None, _extenstion='.jpg'):
 
     if _file is None:
         _file = time.strftime('%Y-%m-%d-%H-%M-%S-%Z')
 
-    filename = _file + _extenstion
+    filename = _path + _file + _extenstion
 
     global drange, color
 
@@ -66,3 +70,40 @@ def capture(_file=None, _extenstion='.jpg'):
             camera.set_image_type(asi.ASI_IMG_RAW16)
 
     camera.capture(filename=filename)
+
+
+# Recording process function
+# Use timelapse function to start reording
+def record(_directory, _delay):
+
+    while True:
+        filename = str(time.time()).replace('.', '_')
+        capture(_path=_directory, _file=filename, _extenstion=_extension)
+        time.sleep(_delay / 1000)
+
+
+# Run a background proess for creating a timelapse
+# Uses a RAM disk by default
+# _delay is time in milliseconds between expositions
+def timelapse(_action='start', _directory='/mnt/skycam', _delay=1000, _extenstion='.jpg'):
+
+    if _action == 'start':
+        start()
+    elif _action == 'stop':
+        stop()
+
+    # Start the timelapse
+    # Starts a timelapse in the bakground
+    def start():
+
+        if not os.path.exists(_directory):
+            raise NameError('Timelapse diretory does not exsist')
+
+        global recorder
+        recorder = Process(target=record, args=(_directory,))
+        recorder.start()
+
+    # Stops the timelapse
+    def stop():
+
+        recorder.join()
