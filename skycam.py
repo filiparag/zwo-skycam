@@ -55,12 +55,12 @@ def configure(_gain=150, _exposure=30000, _wb_b=99, \
 
 
 # Capture a single frame and save it to a file
-def capture(_directory='./', _file=None, _extenstion='.jpg'):
+def capture(_directory='./', _file=None, _extension='.jpg'):
 
     if _file is None:
         _file = time.strftime('%Y-%m-%d-%H-%M-%S-%Z')
 
-    filename = _directory + '/' + _file + _extenstion
+    filename = _directory + '/' + _file + _extension
 
     global camera, drange, color
 
@@ -77,19 +77,19 @@ def capture(_directory='./', _file=None, _extenstion='.jpg'):
 
 # Recording process function
 # Use timelapse function to start reording
-def record(_directory, _delay, _extenstion):
+def record(_directory, _delay, _extension):
 
     global recorder
     while recorder[1]:
         filename = str(time.time()).replace('.', '_')
-        capture(_directory=_directory, _file=filename, _extenstion=_extenstion)
+        capture(_directory=_directory, _file=filename, _extension=_extension)
         time.sleep(_delay / 1000)
 
 
 # Run a background proess for creating a timelapse
 # Uses a RAM disk by default
 # _delay is time in milliseconds between expositions
-def timelapse(_action='start', _directory='/mnt/skycam', _delay=0, _extenstion='.jpg', _selection='newest', _delete=False):
+def timelapse(_action='start', _directory='/mnt/skycam', _delay=0, _extension='.jpg', _selection='newest', _delete=False):
 
     # Start the timelapse
     # Starts a timelapse in the bakground
@@ -99,7 +99,7 @@ def timelapse(_action='start', _directory='/mnt/skycam', _delay=0, _extenstion='
             raise Exception('Timelapse diretory does not exsist')
 
         global recorder
-        recorder = [Thread(target=record, args=(_directory, _delay, _extenstion)), True]
+        recorder = [Thread(target=record, args=(_directory, _delay, _extension)), True]
         recorder[0].daemon = True
         recorder[0].start()
 
@@ -166,15 +166,3 @@ def timelapse(_action='start', _directory='/mnt/skycam', _delay=0, _extenstion='
         return fetch(_selection, _delete, _directory)
     elif _action == 'count':
         return count(_directory)
-        
-
-if __name__ == '__main__':
-    initialize()
-    configure(_exposure=5000)
-    # timelapse('start', _delay=0, _directory='/mnt/skycam/')
-    # time.sleep(20)
-    # timelapse('stop')
-    f = timelapse('fetch', _selection='all', _delete=True, _directory='/mnt/skycam/')
-    # print(timelapse('count', _directory='/mnt/skycam/'))
-    # i.show()
-    # print(t)
