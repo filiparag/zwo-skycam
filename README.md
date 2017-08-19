@@ -5,6 +5,9 @@ An easy to use Python 3 framework for ZWO ASI cameras and Raspberry Pi 3
 ---
 
 ## Installation
+
+This library is mainly intended to be run on Raspbery Pi 3. It should work on other similar ARM platforms without any hiccups, but your mileage may vary.
+
 ### Prerequisites
 
 Updating repositories
@@ -19,9 +22,9 @@ Python 3
 
 `sudo apt -y install python3 pyton3-pip`
 
-Pillow module
+Modules
 
-`sudo pip3 install Pillow`
+`sudo pip3 install Pillow zwoasi`
 
 ### Cloning repository
 
@@ -57,4 +60,32 @@ After initializing and configuring the camera, you can capture individual frames
 
 ### Timelapse
 
-**TODO**
+Timelapse mode can automatically capture frames. It is not intended to be used to capture video or fast motion.  
+
+#### Capturing
+
+To start a timelapse, call the funtion:
+
+`timelapse( 'start', _directory, _delay, _extension )`
+
+It will start a new thread in the background. Camera onfiguration can be modifiet during an active timelapse recording.
+
+When you want to stop recording, call `timelapse( 'stop' )`.
+
+#### Using captured photos
+
+Recorded timelapse frames can be accessed trough this framework with:
+
+`timelapse( 'fetch', _diretory, _seletion, _delete )`
+
+Selection parameter indicates whih frames to return, and it an be `newest`, `oldest` or `all`. Delete parameter lets you delete seleted frames to ffree up some space. Beside the image BLOB, you get the exact time in the format of UNIX timestamp when the frame was taken.
+
+You can get the number of frames by calling `timelapse( 'count', _diretory )`.
+
+### Video
+
+Planned for future development.
+
+---
+
+If you have any issuses with the framework or want to improve it, feel free to open an issue or submit a pull request.
