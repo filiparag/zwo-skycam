@@ -1,168 +1,254 @@
 #!/usr/bin/env python3
 
 import os
-import sys
 import time
-from PIL import Image
 import zwoasi as asi
 from threading import Thread
+from queue import Queue
+
+class SkyCam:
+    """ SkyCam is an abstraction layer for zwoasi Python bindings 
+    """
+
+    @staticmethod
+    def initialize(_library=None):
+        """ Initialize ZWOASI SDK library
+
+        The official SDK library can be obtained from this link:
+        https://astronomy-imaging-camera.com/tets1/
+
+        Args:
+            _library (str): ovveride default location for the library
+        
+        """
+
+        if _library is None:
+            _library = os.path.dirname(os.path.realpath(__file__))\
+                       + '/asi.so'
+
+        asi.init(_library)
 
 
-# Initialize camera
-def initialize(_library=(os.path.dirname(os.path.realpath(__file__)) + '/asi.so')):
+    @staticmethod
+    def cameras():
+        """ List of conneted cameras
 
-    asi.init(_library)
+        Returns:
+            list: List of camera names as sttings
+        
+        """
 
-    num_cameras = asi.get_num_cameras()
-    if num_cameras == 0:
-        raise Exception('No cameras found')
-    if num_cameras > 1:
-        raise Exception('Only one camera is allowed')
-
-    cameras_found = asi.list_cameras()
-
-    global camera, camera_info
-    camera = asi.Camera(0)
-    camera_info = camera.get_camera_property()
-
-    camera.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, camera.get_controls()['BandWidth']['MinValue'])
-
-    camera.stop_video_capture()
-    camera.stop_exposure()
+        return asi.list_cameras()
 
 
-# Configure camera settings
-# _drange must be either 8 or 16
-# _oolor is a boolean
-def configure(_gain=150, _exposure=30000, _wb_b=99, \
-              _wb_r=75, _gamma=60, _brightness=50, _flip=0, \
-              _drange=8, _color=False):
+    def __init__(self, _camera_id, _bandwidth=80):
+        """ Initializes a SkyCam camera object
 
-    global camera
-    camera.set_control_value(asi.ASI_GAIN, _gain)
-    camera.set_control_value(asi.ASI_EXPOSURE, _exposure)
-    camera.set_control_value(asi.ASI_WB_B, _wb_b)
-    camera.set_control_value(asi.ASI_WB_R, _wb_r)
-    camera.set_control_value(asi.ASI_GAMMA, _gamma)
-    camera.set_control_value(asi.ASI_BRIGHTNESS, _brightness)
-    camera.set_control_value(asi.ASI_FLIP, _flip)
+        This funtion automatically calls configure() which sets camera 
+        parameters to default settings.
 
-    camera.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, 80)
+        Args:
+            _camera_id (int): Camera ID in the cameras() list or it's name
+        
+        """
 
-    global drange, color
-    color = _color
-    drange = _drange
+        self.camera = asi.Camera(_camera_id)
+        self.camera_info = self.camera.get_camera_property()
+        self.camera.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, _bandwidth)
+        self.camera.stop_video_capture()
+        self.camera.stop_exposure()
+        self.configure()
 
 
-# Capture a single frame and save it to a file
-def capture(_directory='./', _file=None, _extension='.jpg'):
+    def configure(self, _gain=150, _exposure=1000000, _wb_b=99, \
+                  _wb_r=75, _gamma=60, _brightness=50, _flip=0, \
+                  _bin=1, _roi=None, _drange=8, \
+                  _color=False, _mode='video'):
+        """ Used to change camera parameters
 
-    if _file is None:
-        _file = time.strftime('%Y-%m-%d-%H-%M-%S-%Z')
+        Args:
+            _gain (int): Camera gain
+            _exposure (int): Camera exposure in microseconds
+            _wb_b (int): Camera whitebalance
+            _wb_r (int): Camera whitebalance
+            _gamma (int): Camera gamma
+            _brightness (int): Camera brightness
+            _flip (int): Picture flip, valuse can be 0 or 1
+            _bin (int): Picture binning, values can be 1 or 2
+            _roi (tuple): Region of interest, formatted as a 
+                          tuple (x, y, width, height)
+            _drange (int): Dynamic range, value can be 8 or 16 bits
+            _color (bool): Camera oolor mode
+            _mode (str): Capturing mode, value can be 'video' or 'piture'
+                         If set to 'picture', apturing is a lot slower.
 
-    filename = _directory + '/' + _file + _extension
+        """
+        
+        self.camera.stop_exposure()
 
-    global camera, drange, color
+        if _mode == 'video':
+            self.camera.start_video_capture()
+        elif _mode == 'picture':
+            self.camera.stop_video_capture()
+        self.mode = _mode
 
-    if color is True:
-        camera.set_image_type(asi.ASI_IMG_RGB24)
-    else:
-        if drange is 8:
-            camera.set_image_type(asi.ASI_IMG_RAW8)
-        elif drange is 16:
-            camera.set_image_type(asi.ASI_IMG_RAW16)
+        self.camera.set_control_value(asi.ASI_GAIN, _gain)
+        self.camera.set_control_value(asi.ASI_EXPOSURE, _exposure)
+        self.camera.set_control_value(asi.ASI_WB_B, _wb_b)
+        self.camera.set_control_value(asi.ASI_WB_R, _wb_r)
+        self.camera.set_control_value(asi.ASI_GAMMA, _gamma)
+        self.camera.set_control_value(asi.ASI_BRIGHTNESS, _brightness)
+        self.camera.set_control_value(asi.ASI_FLIP, _flip)
 
-    camera.capture(filename=filename)
+        if _roi is None:
+            _roi = (
+                0, 0, 
+                int(self.camera_info['MaxWidth'] / _bin), 
+                int(self.camera_info['MaxHeight'] / _bin)
+            )
 
+        self.camera.set_roi(start_x=_roi[0], start_y=_roi[1],\
+            width=_roi[2], height=_roi[3], bins=_bin)
 
-# Recording process function
-# Use timelapse function to start reording
-def record(_directory, _delay, _extension):
-
-    global recorder
-    while recorder[1]:
-        filename = str(time.time()).replace('.', '_')
-        capture(_directory=_directory, _file=filename, _extension=_extension)
-        time.sleep(_delay / 1000)
-
-
-# Run a background proess for creating a timelapse
-# Uses a RAM disk by default
-# _delay is time in milliseconds between expositions
-def timelapse(_action='start', _directory='/mnt/skycam', _delay=0, _extension='.jpg', _selection='newest', _delete=False):
-
-    # Start the timelapse
-    # Starts a timelapse in the bakground
-    def start():
-
-        if not os.path.exists(_directory):
-            raise Exception('Timelapse diretory does not exsist')
-
-        global recorder
-        recorder = [Thread(target=record, args=(_directory, _delay, _extension)), True]
-        recorder[0].daemon = True
-        recorder[0].start()
-
-    # Stops the timelapse
-    def stop():
-
-        global recorder     
-        recorder[1] = False
-        recorder[0].join()
-
-    # Returns the number of frames in the timelapse
-    def count(_directory):
-
-        return len(os.listdir(_directory))
-
-    # Returns a frame from the timelapse
-    # _selection can be 'oldest', 'newest' or 'all'
-    def fetch(_selection, _delete, _directory):
-
-        frames = os.listdir(_directory)
-
-        if len(frames) == 0:
-            raise Exception('No frames availabe to fetch')
-
-        if _selection == 'all':
-
-            frames = sorted(frames)
-            
-            images = []
-
-            for frame in frames:
-
-                images.append((
-                    Image.open(_directory + '/' + frame),
-                    float(os.path.splitext(frame)[0].replace('_', '.'))
-                ))
-
-                if _delete:
-                    os.remove(_directory + '/' + frame)
-
-            return images
+        if _color is True:
+            self.camera.set_image_type(asi.ASI_IMG_RGB24)
 
         else:
-            
-            if _selection == 'newest':
-                filename = max(frames)
-            elif _selection == 'oldest':
-                filename = max(frames)
-
-            image = Image.open(_directory + '/' + filename)
-            timestamp = float(os.path.splitext(filename)[0].replace('_', '.'))
-
-            if _delete:
-                os.remove(_directory + '/' + filename)
-
-            return (image, timestamp)
+            if _drange is 8:
+                self.camera.set_image_type(asi.ASI_IMG_RAW8)
+            elif _drange is 16:
+                self.camera.set_image_type(asi.ASI_IMG_RAW16)
 
 
-    if _action == 'start':
-        start()
-    elif _action == 'stop':
-        stop()
-    elif _action == 'fetch':
-        return fetch(_selection, _delete, _directory)
-    elif _action == 'count':
-        return count(_directory)
+    def capture(self, _directory=None, _file=None, _format='.jpg'):
+        """ Frame capturing function
+
+        If both _directory and _file are not declared, it will return 
+        the picture as an array. Otherwise, undeclared parameters will
+        fall back to default values.
+
+        Args:
+            _directory (str): Path for saving captured photos
+            _file (str): File name, strftime formatting is enabled
+                         Formatting instrutions: http://strftime.org/
+            _format (str): Indiates piture format, default is JPEG
+
+        Returns:
+            numpy array: If both _directory and _file are not declared
+        
+        """
+        
+        if _file is None and _directory is not None:
+            _file = self.camera_info['Name'].replace(' ', '-') \
+                    + '-%Y-%m-%d-%H-%M-%S-%Z' + _format
+
+        if _directory s None and _file is not None:
+            if not os.path.isdir('/tmp/skycam/'):
+                os.makedirs('/tmp/skycam', 755)
+            _directory = '/tmp/skycam/'
+
+        if _file is not None and _directory is not None:
+        
+            _file = time.strftime(_file)
+
+            if self.mode == 'picture':
+                self.camera.capture(filename=\
+                    (_directory + '/' + _file))
+            elif self.mode == 'video':
+                self.camera.capture_video_frame(filename=\
+                    (_directory + '/' + _file))
+
+        else:
+
+            if self.mode == 'picture':
+                return self.camera.capture()
+            elif self.mode == 'video':
+                return self.camera.capture_video_frame()
+
+
+    def timelapse(self, _action, _directory=None, _file=None,\
+                  _format='.jpg', _delay=0):
+        """ Automatic frame capturing in a separate thread
+
+        Args:
+            _action (str): Timelapse control
+                           'start' starts the timelapse
+                           'stop'  stops the timelapse and 
+                                   clears frame buffer
+                           'pause' pauses the timelapse
+                           'next'  retrieves next frame
+                           'all    retrieves all frames
+            _directory (str): Path for saving captured photos
+            _file (str): File name pattern, strftime formatting is enabled
+            _format (str): Indiates piture format, default is JPEG
+            _delay (int): Time delay between two exposures in milliseonds
+
+        Returns:
+            If _action is 'next' it will return the oldest frame in the 
+            queue and remove it from the queue.
+
+            If _action is 'all' it will return all queued frames in an 
+            age-ordered ascending list. Calling this doesn't clear the
+            frame queue.
+        
+        """
+
+        if _action == 'start':
+
+            if _directory is None and _file is None:
+                self.timelapse_buffer = Queue()
+
+            self.recorder = Thread(target=self.timelapse_recorder,\
+                            args=(_directory, _file, _format, _delay))
+            self.recorder.daemon = True
+            self.timelapse_active = True
+            self.recorder.start()
+
+        elif _action == 'stop' or 'pause':
+
+            self.timelapse_active = False
+            self.recorder.join()
+
+            if _action == 'stop':
+                try:
+                    self.timelapse_buffer.clear()
+
+        elif _action == 'next':
+
+            # TODO: Add support for non-buffer timelapses
+
+            return self.timelapse_buffer.get()
+
+        elif _action == 'all':
+
+            # TODO: Add support for non-buffer timelapses
+
+            return list(self.timelapse_buffer.queue)
+
+        # TODO: Add option to clear frame buffer
+
+
+    def timelapse_recorder(self, _directory=None, _file=None,\
+                           _format='.jpg', _delay=0):
+        """ Timelapse background thread
+
+        This funtion souldn't be called. Use timelapse() instead. 
+
+        Args:
+            _directory (str): Path for saving captured photos
+            _file (str): File name pattern, strftime formatting is enabled
+            _format (str): Indiates piture format, default is JPEG
+            _delay (int): Time delay between two exposures in milliseonds
+
+        """
+
+        if _directory is None and _file is None:
+            while self.timelapse_active:
+                frame = self.capture()
+                self.timelapse_buffer.put((frame, time.time()))
+                time.sleep(_delay / 1000)
+        else:
+            while self.timelapse_active:
+                self.capture(_directory=_directory, _file=_file, _format=_format)
+                time.sleep(_delay / 1000)
+
