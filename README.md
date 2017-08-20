@@ -70,14 +70,22 @@ For more details about control, read the *docstring* of the function in `skycam.
 
 To capture a single frame, use `capture( _directory, _file, _format )`. If you don't supply any parameters, this method will return the frame as a NumPy array. File name parameter goes through `strftime()` formatting, so you can easily add time and date.
 
-Default value for `_directory` is current path and for `_file` is like in the following example: `ZWO-ASI174MM-2017-08-19-15-40-55-UTC`.
+Default value for `_directory` is current path and for `_file` is like in the following example: `ZWO-ASI174MM-2017-08-19-15-40-55-UTC-12`.
 
 ### Recording
 
-Recording mode can be used to automatically capture sequential frames. To start recording use 
+Recording mode can be used to automatically capture sequential frames. Before starting a recording session, you need to configure it using:
 
-`record( 'start', _directory, _file, _format, _delay )`
+`recorder.configure( _delay, _keep, _save, _directory, _file, _format )`
 
-where you can use parameter `_delay` to create a time gape between consecutive frames. To stop recording, use `record( 'stop' )`.
+After this you can use `recorder.start()` and `recorder.stop()` to start and stop recording.
 
-To access recorded frames, use `record( 'next' )` or `record( 'all' )`. Note that using option `'next'` erases retrieved frame from the queue.
+Method `recorder.buffer_is_empty()` returns whether the buffer is empty. 
+
+Methods `recorder.buffer_next()` and `recorder.buffer_all()` return oldest and all frames in the buffer respectively. Note that `recorder.buffer_next()` erases retrieved image from the buffer.
+
+To clear the buffer, use `recorder.buffer_clear()`. Loading frames saved on storage media can be done using `recorder.buffer_load()`.
+
+---
+
+Detailed explanation for every function can be found in form of *docstrings* in `skycam.py`.
