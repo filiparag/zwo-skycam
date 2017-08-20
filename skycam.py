@@ -5,6 +5,8 @@ import time
 import zwoasi as asi
 from threading import Thread
 from queue import Queue
+from PIL import Image
+from glob import glob
 
 class SkyCam:
     """ SkyCam is an abstraction layer for zwoasi Python bindings 
@@ -44,8 +46,8 @@ class SkyCam:
     def __init__(self, _camera_id, _bandwidth=80):
         """ Initializes a SkyCam camera object
 
-        This funtion automatically calls configure() which sets camera 
-        parameters to default settings.
+        This funtion automatically sets camera parameters 
+        to default settings. To change them use configure()
 
         Args:
             _camera_id (int): Camera ID in the cameras() list or it's name
@@ -58,12 +60,25 @@ class SkyCam:
         self.camera.stop_video_capture()
         self.camera.stop_exposure()
         self.configure()
+        self.frame_buffer = Queue()
+        self.frame_counter = 0
+        self.recorder = self.Recorder(self)
+
+        self.camera.set_control_value(asi.ASI_GAIN, 150)
+        self.camera.set_control_value(asi.ASI_EXPOSURE, 1000000)
+        self.camera.set_control_value(asi.ASI_WB_B, 99)
+        self.camera.set_control_value(asi.ASI_WB_R, 75)
+        self.camera.set_control_value(asi.ASI_GAMMA, 60)
+        self.camera.set_control_value(asi.ASI_BRIGHTNESS, 50)
+        self.camera.set_control_value(asi.ASI_FLIP, 0)
+        self.camera.start_video_capture()
+        self.camera.set_image_type(asi.ASI_IMG_RAW8)
 
 
-    def configure(self, _gain=150, _exposure=1000000, _wb_b=99, \
-                  _wb_r=75, _gamma=60, _brightness=50, _flip=0, \
-                  _bin=1, _roi=None, _drange=8, \
-                  _color=False, _mode='video'):
+    def configure(self, _gain=None, _exposure=None, _wb_b=None,\
+                  _wb_r=None, _gamma=None, _brightness=None, _flip=None,\
+                  _bin=None, _roi=None, _drange=None,\
+                  _color=None, _mode=None):
         """ Used to change camera parameters
 
         Args:
@@ -90,15 +105,26 @@ class SkyCam:
             self.camera.start_video_capture()
         elif _mode == 'picture':
             self.camera.stop_video_capture()
-        self.mode = _mode
+        if _mode is not None:
+            self.mode = _mode
 
-        self.camera.set_control_value(asi.ASI_GAIN, _gain)
-        self.camera.set_control_value(asi.ASI_EXPOSURE, _exposure)
-        self.camera.set_control_value(asi.ASI_WB_B, _wb_b)
-        self.camera.set_control_value(asi.ASI_WB_R, _wb_r)
-        self.camera.set_control_value(asi.ASI_GAMMA, _gamma)
-        self.camera.set_control_value(asi.ASI_BRIGHTNESS, _brightness)
-        self.camera.set_control_value(asi.ASI_FLIP, _flip)
+        if _exposure is not None:
+            self.camera.set_control_value(asi.ASI_EXPOSURE, _exposure)
+        if _gain is not None:
+            self.camera.set_control_value(asi.ASI_GAIN, _gain)
+        if _wb_b is not None:
+            self.camera.set_control_value(asi.ASI_WB_B, _wb_b)
+        if _wb_r is not None:
+            self.camera.set_control_value(asi.ASI_WB_R, _wb_r)
+        if _gamma is not None:
+            self.camera.set_control_value(asi.ASI_GAMMA, _gamma)
+        if _brightness is not None:
+            self.camera.set_control_value(asi.ASI_BRIGHTNESS, _brightness)
+        if _flip is not None:
+            self.camera.set_control_value(asi.ASI_FLIP, _flip)
+
+        if _bin is None:
+            _bin = 1
 
         if _roi is None:
             _roi = (
@@ -134,15 +160,19 @@ class SkyCam:
             _format (str): Indiates piture format, default is JPEG
 
         Returns:
-            numpy array: If both _directory and _file are not declared
+            numpy array: If both _directory and _file are not declared, 
+            it will only return the picture as an array.
         
         """
         
         if _file is None and _directory is not None:
             _file = self.camera_info['Name'].replace(' ', '-') \
-                    + '-%Y-%m-%d-%H-%M-%S-%Z' + _format
+                    + '-%Y-%m-%d-%H-%M-%S-%Z-' +\
+                    str(self.frame_counter) + _format
 
-        if _directory s None and _file is not None:
+            self.frame_counter += 1
+
+        if _directory is None and _file is not None:
             if not os.path.isdir('/tmp/skycam/'):
                 os.makedirs('/tmp/skycam', 755)
             _directory = '/tmp/skycam/'
@@ -158,97 +188,165 @@ class SkyCam:
                 self.camera.capture_video_frame(filename=\
                     (_directory + '/' + _file))
 
-        else:
-
-            if self.mode == 'picture':
-                return self.camera.capture()
-            elif self.mode == 'video':
-                return self.camera.capture_video_frame()
+        if self.mode == 'picture':
+            return self.camera.capture()
+        elif self.mode == 'video':
+            return self.camera.capture_video_frame()
 
 
-    def timelapse(self, _action, _directory=None, _file=None,\
-                  _format='.jpg', _delay=0):
-        """ Automatic frame capturing in a separate thread
+    class Recorder:
 
-        Args:
-            _action (str): Timelapse control
-                           'start' starts the timelapse
-                           'stop'  stops the timelapse and 
-                                   clears frame buffer
-                           'pause' pauses the timelapse
-                           'next'  retrieves next frame
-                           'all    retrieves all frames
-            _directory (str): Path for saving captured photos
-            _file (str): File name pattern, strftime formatting is enabled
-            _format (str): Indiates piture format, default is JPEG
-            _delay (int): Time delay between two exposures in milliseonds
+        """ Recorder is used to record continuous 
+            frames automatically
 
-        Returns:
-            If _action is 'next' it will return the oldest frame in the 
-            queue and remove it from the queue.
+        Note that Recorder class gets isntanced as 
+        SkyCam.recorder object.
 
-            If _action is 'all' it will return all queued frames in an 
-            age-ordered ascending list. Calling this doesn't clear the
-            frame queue.
-        
         """
 
-        if _action == 'start':
+        def __init__(self, _owner):
 
-            if _directory is None and _file is None:
-                self.timelapse_buffer = Queue()
+            """ Sets all variables to default state
 
-            self.recorder = Thread(target=self.timelapse_recorder,\
-                            args=(_directory, _file, _format, _delay))
-            self.recorder.daemon = True
-            self.timelapse_active = True
+            """
+
+            self.owner = _owner
+            self.buffer = Queue()
+            self.recording = False
+
+            self.delay = 0
+            self.directory = None
+            self.file = None
+            self.format = None
+            self.keep = True
+            self.save = False
+
+
+        def configure(self, _delay=None, _keep=None, _save=None,\
+                      _directory=None, _file=None, _format=None):
+
+            """ Configure SkyCam recorder
+
+            Args:
+                _delay (int): Delay between frames in milliseconds
+                _keep (bool): Indicates whether to keep frames 
+                              in RAM buffer
+                _save (bool): Indicates whether to keep frames 
+                              to storage device
+                _directory (str): Path for saving captured photos
+                _file (str): File name, strftime formatting is enabled
+                             Formatting instrutions: http://strftime.org/
+                _format (str): Indiates piture format, default is JPEG
+            
+            """
+
+            if _delay is not None:
+                self.delay = _delay
+            if _directory is not None:
+                self.directory = _directory
+            if _file is not None:
+                self.file = _file
+            if _format is not None:
+                self.format = _format
+            if _keep is not None:
+                self.keep = _keep
+            if _save is not None:
+                self.save = _save
+
+
+        def record(self):
+
+            """ Recorder background thread
+
+            Do not call this method directly. Use start() instead.
+            
+            """
+
+            while self.recording:
+
+                if self.save:
+                    _frame = self.owner.capture(_directory=self.directory,\
+                        _file=self.file, _format=self.format)
+                else:
+                    _frame = self.owner.capture()
+
+                if self.keep:
+                    self.buffer.put((_frame, time.time()))
+
+                time.sleep(self.delay / 1000)
+
+
+        def start(self):
+            
+            """ Starts background thread for recording
+            
+            """
+
+            self.recorder = Thread(target=self.record, args=())
+            self.recording = True
             self.recorder.start()
 
-        elif _action == 'stop' or 'pause':
 
-            self.timelapse_active = False
+        def stop(self):
+
+            """ Stops background thread for recording
+            
+            """
+
+            self.recording = False
             self.recorder.join()
 
-            if _action == 'stop':
-                try:
-                    self.timelapse_buffer.clear()
 
-        elif _action == 'next':
+        def buffer_is_empty(self):
 
-            # TODO: Add support for non-buffer timelapses
+            """ Ckeck if buffer is empty
+            
+            """
 
-            return self.timelapse_buffer.get()
+            return self.buffer.empty()
 
-        elif _action == 'all':
+        
+        def buffer_next(self):
 
-            # TODO: Add support for non-buffer timelapses
+            """ Returns oldest frame in the buffer
 
-            return list(self.timelapse_buffer.queue)
+            Calling this method requires _keep to be True.
+            Returned frame gets removed from the buffer.
+            
+            """
 
-        # TODO: Add option to clear frame buffer
+            return self.buffer.get_nowait()
 
 
-    def timelapse_recorder(self, _directory=None, _file=None,\
-                           _format='.jpg', _delay=0):
-        """ Timelapse background thread
+        def buffer_all(self):
 
-        This funtion souldn't be called. Use timelapse() instead. 
+            """ Returns all frames stored in the buffer
 
-        Args:
-            _directory (str): Path for saving captured photos
-            _file (str): File name pattern, strftime formatting is enabled
-            _format (str): Indiates piture format, default is JPEG
-            _delay (int): Time delay between two exposures in milliseonds
+            Calling this method requires _keep to be True.
+            
+            """
 
-        """
+            return list(self.buffer.queue)
 
-        if _directory is None and _file is None:
-            while self.timelapse_active:
-                frame = self.capture()
-                self.timelapse_buffer.put((frame, time.time()))
-                time.sleep(_delay / 1000)
-        else:
-            while self.timelapse_active:
-                self.capture(_directory=_directory, _file=_file, _format=_format)
-                time.sleep(_delay / 1000)
+        
+        def buffer_clear(self):
 
+            """ Clears the buffer
+            
+            """
+
+            self.buffer.clear()
+
+        
+        def buffer_load(self):
+
+            """ Loads all frames stored in _directory 
+            into the buffer.
+
+            Calling this method requires _directory to be
+            defined to an existing direcotry.
+            
+            """
+
+            _files = glob(self.directory)
+            print(_files)
